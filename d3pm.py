@@ -155,25 +155,36 @@ class D3PM(nn.Layer):
         self.x0_model = x0_model
         self.n_T = n_T
         self.hybrid_loss_coeff = hybrid_loss_coeff
-        steps = paddle.arange(dtype="float64", end=n_T + 1) / n_T
-        alpha_bar = paddle.cos(x=(steps + 0.008) / 1.008 * 3.1415926 / 2)
-        self.beta_t = paddle.minimum(
-            x=1 - alpha_bar[1:] / alpha_bar[:-1],
-            y=paddle.ones_like(x=alpha_bar[1:]) * 0.999,
-        )
+
         self.eps = 1e-06
         self.num_classes = num_classes
         q_onestep_mats = []
         q_mats = []
-        for beta in self.beta_t:
-            if forward_type == "uniform":
+
+        if forward_type == "uniform":
+            steps = paddle.arange(dtype="float64", end=n_T + 1) / n_T
+            alpha_bar = paddle.cos(x=(steps + 0.008) / 1.008 * 3.1415926 / 2)
+            self.beta_t = paddle.minimum(
+                x=1 - alpha_bar[1:] / alpha_bar[:-1],
+                y=paddle.ones_like(x=alpha_bar[1:]) * 0.999,
+            )
+            for beta in self.beta_t:
                 mat = paddle.ones(shape=[num_classes, num_classes]) * beta / num_classes
                 mat.diagonal().fill_(
                     value=1 - (num_classes - 1) * beta.item() / num_classes
                 )
                 q_onestep_mats.append(mat)
-            else:
-                raise NotImplementedError
+        elif forward_type == "absorbing":
+            self.beta_t = 1.0 / paddle.linspace(n_T, 1.0, n_T)
+            for beta in self.beta_t:
+                diag = paddle.full(shape=(self.num_classes,), fill_value=1.0 - beta)
+                mat = paddle.diag(diag, offset=0)
+                mat[:, self.num_classes // 2] += beta
+                q_onestep_mats.append(mat)
+        else:
+            raise NotImplementedError(
+                f'{forward_type} not implemented, use one of ["uniform","absorbing"]'
+            )
         q_one_step_mats = paddle.stack(x=q_onestep_mats, axis=0)
         x = q_one_step_mats
         q_one_step_transposed = x.transpose([0, 2, 1])
